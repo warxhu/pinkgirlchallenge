@@ -834,7 +834,22 @@ const USERS={
 };
 const ALL_USERS=['liz','alexandra','oriana','molly','kemberly','admin'];
 
-/* ══ STORAGE ══ */
+/* ══ SUPABASE ══ */
+const SB_URL='https://bngqyoipczbmemubvxam.supabase.co';
+const SB_KEY='sb_publishable_EFVRYDcRUeQYvalfKa1WIw_yKFby-nZ';
+const sbH={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY};
+
+async function sbGet(table,filter=''){
+  try{const r=await fetch(`${SB_URL}/rest/v1/${table}?${filter}`,{headers:sbH});return await r.json()}catch(e){return null}
+}
+async function sbUpsert(table,data){
+  try{await fetch(`${SB_URL}/rest/v1/${table}`,{method:'POST',headers:{...sbH,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(data)})}catch(e){}
+}
+async function sbUpdate(table,data,filter){
+  try{await fetch(`${SB_URL}/rest/v1/${table}?${filter}`,{method:'PATCH',headers:sbH,body:JSON.stringify(data)})}catch(e){}
+}
+
+/* ══ LOCAL FALLBACK ══ */
 const sv=(k,v)=>{try{localStorage.setItem('pgc_'+k,JSON.stringify(v))}catch(e){}};
 const ld=(k,d)=>{try{const r=localStorage.getItem('pgc_'+k);return r!=null?JSON.parse(r):d}catch(e){return d}};
 
@@ -847,6 +862,96 @@ let appData=ld('appData',{rules:'',goal:''});
 function getP(u){
   if(!profiles[u]) profiles[u]={role:'Atleta',bio:'',bannerB64:null,picB64:null,measures:{},progressPhotos:[],goals:[],nota:'',pinterestUrl:'',bookName:'',bookCurrent:0,bookTotal:0,entrenos:0,diasCheck:0,racha:0};
   return profiles[u];
+}
+
+async function syncProfileToCloud(u){
+  const p=getP(u);
+  await sbUpsert('profiles',{
+    id:u, user_key:u,
+    role:p.role||'Atleta', bio:p.bio||'',
+    banner_b64:p.bannerB64||null, pic_b64:p.picB64||null,
+    measures:p.measures||{}, progress_photos:p.progressPhotos||[],
+    goals:p.goals||[], nota:p.nota||'',
+    pinterest_url:p.pinterestUrl||'',
+    book_name:p.bookName||'', book_current:p.bookCurrent||0, book_total:p.bookTotal||0,
+    entrenos:p.entrenos||0, dias_check:p.diasCheck||0, racha:p.racha||0,
+    updated_at:new Date().toISOString()
+  });
+}
+
+async function loadProfileFromCloud(u){
+  const rows=await sbGet('profiles',`user_key=eq.${u}`);
+  if(rows&&rows.length>0){
+    const r=rows[0];
+    profiles[u]={
+      role:r.role||'Atleta', bio:r.bio||'',
+      bannerB64:r.banner_b64||null, picB64:r.pic_b64||null,
+      measures:r.measures||{}, progressPhotos:r.progress_photos||[],
+      goals:r.goals||[], nota:r.nota||'',
+      pinterestUrl:r.pinterest_url||'',
+      bookName:r.book_name||'', bookCurrent:r.book_current||0, bookTotal:r.book_total||0,
+      entrenos:r.entrenos||0, diasCheck:r.dias_check||0, racha:r.racha||0,
+    };
+    sv('profiles',profiles);
+  }
+}
+
+async function syncCheckToCloud(u,dateKey,data){
+  await sbUpsert('checks',{
+    user_key:u, date_key:dateKey,
+    entrene:data.entrene||false, agua:data.agua||false,
+    comida:data.comida||false, pasos:data.pasos||false,
+    sueno:data.sueno||false, lectura:data.lectura||false,
+    feeling:data.feeling||'',
+    photo_entrene:data.photo_entrene||null, photo_comida:data.photo_comida||null,
+    note_entrene:data.note_entrene||'', note_agua:data.note_agua||'',
+    note_comida:data.note_comida||'', note_pasos:data.note_pasos||'',
+    note_sueno:data.note_sueno||'', note_lectura:data.note_lectura||'',
+    updated_at:new Date().toISOString()
+  });
+}
+
+async function loadChecksFromCloud(u){
+  const rows=await sbGet('checks',`user_key=eq.${u}`);
+  if(rows&&rows.length>0){
+    if(!checks[u])checks[u]={};
+    rows.forEach(r=>{
+      checks[u][r.date_key]={
+        entrene:r.entrene, agua:r.agua, comida:r.comida,
+        pasos:r.pasos, sueno:r.sueno, lectura:r.lectura,
+        feeling:r.feeling||'',
+        photo_entrene:r.photo_entrene, photo_comida:r.photo_comida,
+        note_entrene:r.note_entrene||'', note_agua:r.note_agua||'',
+        note_comida:r.note_comida||'', note_pasos:r.note_pasos||'',
+        note_sueno:r.note_sueno||'', note_lectura:r.note_lectura||'',
+      };
+    });
+    sv('checks',checks);
+  }
+}
+
+async function loadAllChecksForInfo(){
+  const rows=await sbGet('checks','select=user_key,date_key,entrene');
+  if(rows&&rows.length>0){
+    rows.forEach(r=>{
+      if(!checks[r.user_key])checks[r.user_key]={};
+      if(!checks[r.user_key][r.date_key])checks[r.user_key][r.date_key]={};
+      checks[r.user_key][r.date_key].entrene=r.entrene;
+    });
+  }
+}
+
+async function loadAllProfilesForInfo(){
+  const rows=await sbGet('profiles','select=user_key,role,pic_b64,entrenos,dias_check');
+  if(rows&&rows.length>0){
+    rows.forEach(r=>{
+      if(!profiles[r.user_key])profiles[r.user_key]={};
+      profiles[r.user_key].role=r.role||'Atleta';
+      profiles[r.user_key].picB64=r.pic_b64||null;
+      profiles[r.user_key].entrenos=r.entrenos||0;
+    });
+    sv('profiles',profiles);
+  }
 }
 
 /* ══ THEME ══ */
@@ -940,13 +1045,20 @@ function boostFloaters(vel){
 }
 
 /* ══ AUTH ══ */
-function doLogin(){
+async function doLogin(){
   const u=document.getElementById('inp-user').value.trim().toLowerCase();
   const p=document.getElementById('inp-pass').value;
   const err=document.getElementById('login-err');
   if(!USERS[u]){err.textContent='Usuario no encontrado';return}
   if(USERS[u].pass!==p){err.textContent='Contraseña incorrecta';return}
-  err.textContent='';CU=u;sv('session',u);getP(u);sv('profiles',profiles);enterApp();
+  err.textContent='';
+  document.querySelector('.btn-primary').textContent='Cargando... 💖';
+  CU=u;sv('session',u);
+  getP(u);
+  await loadProfileFromCloud(u);
+  await loadChecksFromCloud(u);
+  sv('profiles',profiles);sv('checks',checks);
+  enterApp();
 }
 function doLogout(){
   CU=null;sv('session',null);
@@ -988,7 +1100,9 @@ function goTab(name){
 }
 
 /* ══ INFO TAB ══ */
-function renderInfo(){
+async function renderInfo(){
+  await loadAllProfilesForInfo();
+  await loadAllChecksForInfo();
   const ad=ld('appData',{});
   if(ad.rules)document.getElementById('e-rules').textContent=ad.rules;
   if(ad.goal)document.getElementById('e-goal').textContent=ad.goal;
@@ -1200,6 +1314,9 @@ function saveCheck(){
   }
   p.racha=racha;
   sv('profiles',profiles);
+  // sync to cloud
+  syncCheckToCloud(CU,key,data);
+  syncProfileToCloud(CU);
   Object.keys(blockPhotos).forEach(k=>delete blockPhotos[k]);
   renderCal();
   showToast('¡Check guardado! 💖');
@@ -1257,34 +1374,34 @@ function trigUp(id){document.getElementById(id).click()}
 
 function setBanner(e){
   const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>{getP(CU).bannerB64=ev.target.result;sv('profiles',profiles);renderProfile();showToast('Banner actualizado ✓')};r.readAsDataURL(f);
+  const r=new FileReader();r.onload=ev=>{getP(CU).bannerB64=ev.target.result;sv('profiles',profiles);syncProfileToCloud(CU);renderProfile();showToast('Banner actualizado ✓')};r.readAsDataURL(f);
 }
 
 function setPic(e){
   const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>{getP(CU).picB64=ev.target.result;sv('profiles',profiles);renderProfile();renderTopAv();showToast('Foto de perfil actualizada ✓')};r.readAsDataURL(f);
+  const r=new FileReader();r.onload=ev=>{getP(CU).picB64=ev.target.result;sv('profiles',profiles);syncProfileToCloud(CU);renderProfile();renderTopAv();showToast('Foto de perfil actualizada ✓')};r.readAsDataURL(f);
 }
 
 function editBio(){const el=document.getElementById('prof-bio');el.contentEditable='true';el.focus()}
-function saveBio(){const el=document.getElementById('prof-bio');el.contentEditable='false';getP(CU).bio=el.textContent;sv('profiles',profiles);showToast('Bio guardada ✓')}
+function saveBio(){const el=document.getElementById('prof-bio');el.contentEditable='false';getP(CU).bio=el.textContent;sv('profiles',profiles);syncProfileToCloud(CU);showToast('Bio guardada ✓')}
 
 function editM(key){
   const cur=(getP(CU).measures||{})[key]||'';
   const lbls={peso:'Peso (kg)',estatura:'Estatura (cm)',cintura:'Cintura (cm)',cadera:'Cadera (cm)',pecho:'Pecho (cm)',brazo:'Brazo (cm)'};
   const v=prompt(lbls[key]+':',cur);
-  if(v!=null){if(!getP(CU).measures)getP(CU).measures={};getP(CU).measures[key]=v.trim();sv('profiles',profiles);renderProfile();showToast(lbls[key]+' guardado ✓')}
+  if(v!=null){if(!getP(CU).measures)getP(CU).measures={};getP(CU).measures[key]=v.trim();sv('profiles',profiles);syncProfileToCloud(CU);renderProfile();showToast(lbls[key]+' guardado ✓')}
 }
 
 function addProgPhoto(e){
   const f=(e.target||e).files[0];if(!f)return;
   const r=new FileReader();r.onload=ev=>{
     if(!getP(CU).progressPhotos)getP(CU).progressPhotos=[];
-    getP(CU).progressPhotos.push(ev.target.result);sv('profiles',profiles);renderProfile();showToast('Foto de progreso agregada ✓');
+    getP(CU).progressPhotos.push(ev.target.result);sv('profiles',profiles);syncProfileToCloud(CU);renderProfile();showToast('Foto de progreso agregada ✓');
   };r.readAsDataURL(f);
 }
 
 function editNota(){const el=document.getElementById('nota-txt');el.contentEditable='true';el.focus()}
-function saveNota(){const el=document.getElementById('nota-txt');el.contentEditable='false';getP(CU).nota=el.textContent;sv('profiles',profiles);showToast('Nota guardada ✓')}
+function saveNota(){const el=document.getElementById('nota-txt');el.contentEditable='false';getP(CU).nota=el.textContent;sv('profiles',profiles);syncProfileToCloud(CU);showToast('Nota guardada ✓')}
 
 function renderGoals(){
   const p=getP(CU);const goals=p.goals||[];
@@ -1296,10 +1413,10 @@ function renderGoals(){
       <span class="g-del" onclick="delGoal(${i})">✕</span>
     </div>`).join('');
 }
-function addGoal(){const p=getP(CU);if(!p.goals)p.goals=[];p.goals.push({text:'',done:false});sv('profiles',profiles);renderGoals()}
-function toggleGoal(i){const p=getP(CU);p.goals[i].done=!p.goals[i].done;sv('profiles',profiles);renderGoals()}
+function addGoal(){const p=getP(CU);if(!p.goals)p.goals=[];p.goals.push({text:'',done:false});sv('profiles',profiles);syncProfileToCloud(CU);renderGoals()}
+function toggleGoal(i){const p=getP(CU);p.goals[i].done=!p.goals[i].done;sv('profiles',profiles);syncProfileToCloud(CU);renderGoals()}
 function updateGoalTxt(i,v){getP(CU).goals[i].text=v;sv('profiles',profiles)}
-function delGoal(i){getP(CU).goals.splice(i,1);sv('profiles',profiles);renderGoals()}
+function delGoal(i){getP(CU).goals.splice(i,1);sv('profiles',profiles);syncProfileToCloud(CU);renderGoals()}
 
 function loadPinterest(){
   const url=document.getElementById('p-url').value.trim();
